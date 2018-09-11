@@ -1,105 +1,68 @@
-var fs = require('fs');
-var path = require('path');
+const path = require('path');
+const fs = require('fs');
+
+if (process.argv.length < 3) {
+    console.log("Недостаточно аргументов");
+    process.exit();
+}
+if (process.argv.length > 3) {
+    console.log("Слишком много аргументов");
+    process.exit();
+}
 
 const DIR_PATH = process.argv[2];
-const EXTENSION = '.txt';
-let	  COPYRIGHT;
+const NEW_DIRECTORY = DIR_PATH + '\\' + path.basename(DIR_PATH);
+let prefix = "";
+const sum = fs.createWriteStream('summary.js');
+let copyright = "";
 
-(() => {
-    fs.access(
-        DIR_PATH,
-        (e) => {
-            if (e) { console.log("Path access error: " + e); }
-            else {
-                createSummaryScript();
-                getCopyright();
-                copyTXT(DIR_PATH, createDirForTXT());
-                getChanges();
-            }
-        }
-    )
-})();
+// разбор и копирование содержимого директория
+let readAndCopyDirectory = function (dir, prefix) {
+    fs.readdir(dir, (err, files) => {
+        if(err) {
+            console.error("Ошибка чтения файлов в директории " + dir);
+        } else {
+            files.forEach(function(element) {
+                let new_unit = dir + '\\' + element;
+                if(fs.statSync(new_unit).isDirectory()) {
+                    readAndCopyDirectory(new_unit, prefix + element + '/');
+                } else {
+                    sum.write('console.log(\'' + prefix + element + '\');\n');
+                    // копирование файлов с добавлением copyright
+                    let new_file = `${NEW_DIRECTORY}\\${path.basename(new_unit)}`;
+                    let logger = fs.createWriteStream(new_file);
+                    fs.readFile(new_unit, (err, data) => {
+                        if(err) console.error("Произошла ошибка при копировании файла")
+                        else logger.write(copyright + '\n\n-------\n' + data + '\n--------\n\n' + copyright);
+                    });
 
-function createDirForTXT() {
-    let DIR = `${DIR_PATH}\\${path.basename(DIR_PATH)}`;
-    fs.mkdir(DIR, (callback) => {
-        if (callback) {
-            console.log("Error create dir for txt: " + callback);
-            throw callback;
+                }
+            }, this);
         }
     });
-    return DIR;
 }
 
-function createSummaryScript() {
-    fs.writeFile(
-        `${DIR_PATH}\\summary.js`,
-        'const fs = require(\'fs\');\n' +
-        'const path = require(\'path\');\n' +
-        '\n' +
-        '(function getFiles(baseDir) {\n' +
-        '    fs.readdir(baseDir, function (e, files){\n' +
-        '        for (let i in files) {\n' +
-        '            let CURDIR = baseDir + path.sep + files[i];\n' +
-        '            fs.stat(CURDIR, (e, stats) => {\n' +
-        '                    if (stats.isDirectory()) {\n' +
-        '                        getFiles(CURDIR);\n' +
-        '                    } else {\n' +
-        '                        console.log(path.relative(__dirname, CURDIR));\n' +
-        '                    }\n' +
-        '                }\n' +
-        '            );\n' +
-        '        }\n' +
-        '    });\n' +
-        '})(__dirname, null);',
-        (callback) => {
-            if (callback) { console.log("Error create summary script: " + callback); }
+let createDir = function (callback) {
+    // создание нового директория
+    fs.access(NEW_DIRECTORY, (err) => {
+        if(err && err.code == 'ENOENT') {
+            fs.mkdir(NEW_DIRECTORY, (err) => {
+                if (err) console.error("Произошла ошибка при создании директории");
+            });
+            fs.watch(NEW_DIRECTORY, (eventType, filename) => {
+                console.log(`${eventType} - ${filename}`);
+            });
         }
-    );
-}
-
-function getCopyright() {
-    fs.readFile("config.json", (e, d) => {
-        if (e) {
-            console.log("Error read file: " + e);
-            copyright = '#DEFAULT#COPYRIGHT#WREST#2018#';
-        }
-        else { copyright = JSON.parse(d); }
-    })}
-
-function copyTXT(dir, enddir) {
-    fs.readdir(dir, function (e, files) {
-        if (e) { console.log("Error read: " + e); }
+        else console.log("Такой директорий уже существует!");
+    });
+    // получение copyright
+    fs.readFile("config.json", (err, data) => {
+        if (err) console.error("Произошла ошибка при чтении файла")
         else {
-            for (let file in files) {
-                let CURFILE = `${dir}\\${files[file]}`;
-                if (fs.statSync(CURFILE).isDirectory()) {
-                    copyTXT(CURFILE, enddir);
-                }
-                else{
-                    if(path.extname(CURFILE) === EXTENSION) {
-                        fs.readFile(CURFILE, 'utf8', (e, data) => {
-                            if (e) { console.log(`can't read file ${CURFILE}: `+ e); }
-                            else { addCopyright(enddir + path.sep + files[file], data); }
-                        })
-                    }
-                }
-            }
+            copyright = JSON.parse(data).copyright;
         }
-    })
+    });
+    callback();
 }
 
-function addCopyright(path, data) {
-    fs.appendFile(
-        path,
-        copyright["copyright"] + data + copyright["copyright"],
-        'utf8',
-        (callback) => {
-            if (callback) { console.log("Error in add copyright: " + callback); }
-        }
-    );
-}
-
-function getChanges() {
-    fs.watch(DIR_PATH, (e, f) => { if (f) { console.log(f.toString()); } });
-}
+createDir(() => readAndCopyDirectory(DIR_PATH, prefix));
